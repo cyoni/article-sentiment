@@ -1,0 +1,38 @@
+{
+  "name": "ourcrowd-press-monitoring",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Press mentions monitoring and dashboard for OurCrowd portfolio companies and funds.",
+  "type": "module",
+  "scripts": {
+    "db:migrate": "node --experimental-sqlite job/db/migrate.js",
+    "db:seed": "node --experimental-sqlite job/db/seed-companies.js",
+    "news:search": "node --experimental-sqlite job/scripts/news-search.js",
+    "news:verify": "node --experimental-sqlite job/scripts/news-verify.js",
+    "news:sentiment": "node --experimental-sqlite job/scripts/news-sentiment.js",
+    "news:alerts": "node --experimental-sqlite job/scripts/news-alerts.js",
+    "news:pipeline": "node --experimental-sqlite job/scripts/run-news-pipeline.js",
+    "ui:dev": "concurrently \"npm run ui:server\" \"vite --config ui/vite.config.js\"",
+    "ui:server": "node --experimental-sqlite ui/server.js",
+    "ui:build": "vite build --config ui/vite.config.js",
+    "ui:start": "node --experimental-sqlite ui/server.js",
+    "lint": "node --check job/db/*.js job/lib/*.js job/scripts/*.js ui/server.js",
+    "test": "node --experimental-sqlite --test test/*.test.js",
+    "check": "npm run lint && npm test && npm run ui:build"
+  },
+  "dependencies": {
+    "express": "^5.2.1",
+    "fast-xml-parser": "^5.2.5",
+    "google-news-url-decoder": "1.2.2",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.7.0",
+    "concurrently": "^10.0.5",
+    "vite": "^6.4.3"
+  },
+  "engines": {
+    "node": ">=22.5.0"
+  }
+}
