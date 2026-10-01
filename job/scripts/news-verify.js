@@ -2,7 +2,18 @@ import { DatabaseSync } from "node:sqlite";
 import { readFileSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { assertSafeArticleUrl, normalizeIsoDate, truncate } from "../lib/news-utils.js";
+import {
+  assertSafeArticleUrl,
+  companyContextJson,
+  fillTemplate,
+  normalizeIsoDate,
+  truncate,
+} from "../lib/news-utils.js";
+import {
+  delay,
+  isRetryableOllamaError,
+  retryableOllamaError,
+} from "../lib/ollama-utils.js";
 
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const databasePath =
@@ -254,12 +265,6 @@ function isValidDuplicateResult(result, previousArticleIds) {
   );
 }
 
-function fillTemplate(template, values) {
-  return template.replace(/\{\{([A-Z_]+)\}\}/g, (_, key) =>
-    String(values[key] ?? ""),
-  );
-}
-
 function candidateJson(candidate) {
   return {
     id: candidate.id,
@@ -273,29 +278,16 @@ function candidateJson(candidate) {
   };
 }
 
-function companyJson(company) {
-  return JSON.stringify(
-    {
-      name: company.name,
-      domain: company.domain ?? null,
-      sector: company.sector ?? null,
-      description: company.description ?? null,
-    },
-    null,
-    2,
-  );
-}
-
 function buildCompanyMatchPrompt(company, candidate) {
   return fillTemplate(companyMatchPrompt, {
-    TARGET_COMPANY_JSON: companyJson(company),
+    TARGET_COMPANY_JSON: companyContextJson(company),
     CANDIDATE_JSON: JSON.stringify(candidateJson(candidate), null, 2),
   });
 }
 
 function buildDuplicatePrompt(company, candidate, previousArticles) {
   return fillTemplate(duplicateCheckPrompt, {
-    TARGET_COMPANY_JSON: companyJson(company),
+    TARGET_COMPANY_JSON: companyContextJson(company),
     CANDIDATE_JSON: JSON.stringify(candidateJson(candidate), null, 2),
     PREVIOUS_ARTICLES_JSON: JSON.stringify(
       previousArticles.map((article) => ({
@@ -308,25 +300,6 @@ function buildDuplicatePrompt(company, candidate, previousArticles) {
       2,
     ),
   });
-}
-
-function retryableOllamaError(message, responseText = null) {
-  const error = new Error(message);
-  error.retryable = true;
-  error.responseText = responseText;
-  return error;
-}
-
-function isRetryableOllamaError(error) {
-  return (
-    error?.retryable === true ||
-    error?.name === "AbortError" ||
-    /fetch failed|network|socket|ECONNRESET|ETIMEDOUT/i.test(error?.message ?? "")
-  );
-}
-
-function delay(milliseconds) {
-  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 async function callOllamaOnce(prompt, format) {

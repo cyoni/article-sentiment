@@ -104,7 +104,6 @@ function DashboardPage() {
         <main className="app-shell">
             <header className="hero">
                 <div>
-                    <p className="eyebrow">OurCrowd portfolio intelligence</p>
                     <h1>Press monitor</h1>
                     <p className="hero-copy">A clear view of company coverage and sentiment across the rolling 90-day window.</p>
                 </div>

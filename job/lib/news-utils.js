@@ -26,6 +26,21 @@ export function truncate(value, limit) {
     return text.length <= limit ? text : `${text.slice(0, limit)}\n[truncated]`;
 }
 
+export function fillTemplate(template, values) {
+    return template.replace(/\{\{([A-Z_]+)\}\}/g, (_, key) =>
+        String(values[key] ?? ''),
+    );
+}
+
+export function companyContextJson(company) {
+    return JSON.stringify({
+        name: company.name,
+        domain: company.domain ?? null,
+        sector: company.sector ?? null,
+        description: company.description ?? null,
+    }, null, 2);
+}
+
 export function normalizeUrl(value) {
     const url = new URL(value);
     if (!allowedArticleProtocols.has(url.protocol) || !url.hostname || url.username || url.password) {

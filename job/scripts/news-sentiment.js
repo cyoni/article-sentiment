@@ -2,7 +2,16 @@ import { DatabaseSync } from "node:sqlite";
 import { readFileSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { normalizeIsoDate, truncate } from "../lib/news-utils.js";
+import {
+  companyContextJson,
+  normalizeIsoDate,
+  truncate,
+} from "../lib/news-utils.js";
+import {
+  delay,
+  isRetryableOllamaError,
+  retryableOllamaError,
+} from "../lib/ollama-utils.js";
 
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const databasePath =
@@ -33,16 +42,7 @@ const sentimentSchema = {
 
 function buildPrompt(article, company) {
   const values = {
-    TARGET_COMPANY_JSON: JSON.stringify(
-      {
-        name: company.name,
-        domain: company.domain ?? null,
-        sector: company.sector ?? null,
-        description: company.description ?? null,
-      },
-      null,
-      2,
-    ),
+    TARGET_COMPANY_JSON: companyContextJson(company),
     ARTICLE_JSON: JSON.stringify(
       {
         company: company.name,
@@ -60,27 +60,6 @@ function buildPrompt(article, company) {
     /\{\{([A-Z_]+)\}\}/g,
     (_, key) => values[key] ?? "",
   );
-}
-
-function retryableOllamaError(message, responseText = null) {
-  const error = new Error(message);
-  error.retryable = true;
-  error.responseText = responseText;
-  return error;
-}
-
-function isRetryableOllamaError(error) {
-  return (
-    error?.retryable === true ||
-    error?.name === "AbortError" ||
-    /fetch failed|network|socket|ECONNRESET|ETIMEDOUT/i.test(
-      error?.message ?? "",
-    )
-  );
-}
-
-function delay(milliseconds) {
-  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 async function callOllamaOnce(prompt) {

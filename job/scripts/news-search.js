@@ -19,6 +19,7 @@ const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const databasePath =
   process.env.NEWS_DATABASE_PATH ?? join(projectRoot, "data", "ourcrowd.db");
 const concurrency = 2;
+const recentCandidateDays = 3;
 const decoderMaxAttempts = 4;
 const decoderRetryDelaysMs = [1_000, 3_000, 7_000];
 const requestTimeoutMs = 20_000;
@@ -102,13 +103,23 @@ async function resolveArticleUrl(decoder, rssUrl) {
   throw new Error("Google News URL could not be decoded");
 }
 
+function isResolvedCandidate(candidate) {
+  return (
+    candidate?.canonical_url &&
+    candidate?.rss_url &&
+    candidate.canonical_url !== candidate.rss_url &&
+    !isGoogleNewsUrl(candidate.canonical_url)
+  );
+}
+
 function createCandidateWriter(database) {
-  const findByUrl = database.prepare(`
+  const recentCandidates = database.prepare(`
         SELECT id, canonical_url, rss_url
         FROM candidates
         WHERE company_id = ?
-          AND (canonical_url = ? OR rss_url = ?)
-        LIMIT 1
+          AND rss_url IS NOT NULL
+          AND datetime(COALESCE(published_at, created_at))
+              >= datetime('now', '-' || ? || ' days')
     `);
   const update = database.prepare(`
         UPDATE candidates
@@ -122,64 +133,123 @@ function createCandidateWriter(database) {
         VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?)
     `);
 
-  return (company, query, item, canonicalUrl, needsReview) => {
-    const existing = findByUrl.get(company.id, canonicalUrl, item.rssUrl);
-    if (existing) {
-      if (
-        existing.rss_url === item.rssUrl &&
-        existing.canonical_url === item.rssUrl &&
-        !needsReview
-      ) {
-        update.run(
-          company.id,
-          item.title,
-          canonicalUrl,
-          item.source,
-          query,
-          item.publishedAt,
-          0,
-          existing.id,
-        );
-      }
-      return false;
-    }
-
-    insert.run(
-      company.id,
-      item.title,
-      canonicalUrl,
-      item.source || "Google News",
-      query,
-      item.rssUrl,
-      item.publishedAt,
-      needsReview ? 1 : 0,
-    );
-    return true;
+  return {
+    recentCandidates(companyId) {
+      return recentCandidates.all(companyId, recentCandidateDays);
+    },
+    updateUnresolved(company, query, item, canonicalUrl) {
+      update.run(
+        company.id,
+        item.title,
+        canonicalUrl,
+        item.source,
+        query,
+        item.publishedAt,
+        0,
+        item.id,
+      );
+    },
+    insert(company, query, item, canonicalUrl, needsReview) {
+      const result = insert.run(
+        company.id,
+        item.title,
+        canonicalUrl,
+        item.source || "Google News",
+        query,
+        item.rssUrl,
+        item.publishedAt,
+        needsReview ? 1 : 0,
+      );
+      return {
+        id: Number(result.lastInsertRowid),
+        rss_url: item.rssUrl,
+        canonical_url: canonicalUrl,
+      };
+    },
   };
 }
 
-async function searchCompany(company, decoder, database) {
+async function searchCompany(company, decoder, candidateWriter) {
   const { query, url } = buildFeedUrl(company.name);
   const feed = await fetchText(url);
   const items = parseItems(feed.text);
-  const writeCandidate = createCandidateWriter(database);
+  const existingCandidates = candidateWriter.recentCandidates(company.id);
+  const candidatesByRssUrl = new Map(
+    existingCandidates.map((candidate) => [candidate.rss_url, candidate]),
+  );
+  const candidatesByCanonicalUrl = new Map(
+    existingCandidates.map((candidate) => [candidate.canonical_url, candidate]),
+  );
   let inserted = 0;
   let needsReview = 0;
 
   for (const item of items) {
+    const existingCandidate = candidatesByRssUrl.get(item.rssUrl);
+    if (isResolvedCandidate(existingCandidate)) {
+      console.log(
+        `[search] skip resolved candidate=${existingCandidate.id} company=${company.name} title=${JSON.stringify(item.title)}`,
+      );
+      continue;
+    }
+
     let canonicalUrl = item.rssUrl;
     let unresolved = false;
     try {
       canonicalUrl =
         (await resolveArticleUrl(decoder, item.rssUrl)) ?? item.rssUrl;
       unresolved =
-        canonicalUrl === item.rssUrl || isGoogleNewsUrl(canonicalUrl);
+        isGoogleNewsUrl(item.rssUrl) &&
+        (canonicalUrl === item.rssUrl || isGoogleNewsUrl(canonicalUrl));
     } catch {
       unresolved = true;
     }
-    if (unresolved) needsReview += 1;
-    if (writeCandidate(company, query, item, canonicalUrl, unresolved))
-      inserted += 1;
+    if (unresolved) {
+      needsReview += 1;
+      if (!existingCandidate) {
+        const candidate = candidateWriter.insert(
+          company,
+          query,
+          item,
+          canonicalUrl,
+          true,
+        );
+        candidatesByRssUrl.set(candidate.rss_url, candidate);
+        candidatesByCanonicalUrl.set(candidate.canonical_url, candidate);
+        inserted += 1;
+      }
+      continue;
+    }
+
+    const existingCanonical = candidatesByCanonicalUrl.get(canonicalUrl);
+    if (existingCanonical && existingCanonical.id !== existingCandidate?.id)
+      continue;
+
+    if (existingCandidate) {
+      candidateWriter.updateUnresolved(
+        company,
+        query,
+        { ...item, id: existingCandidate.id },
+        canonicalUrl,
+      );
+      const updatedCandidate = {
+        ...existingCandidate,
+        canonical_url: canonicalUrl,
+      };
+      candidatesByRssUrl.set(updatedCandidate.rss_url, updatedCandidate);
+      candidatesByCanonicalUrl.set(canonicalUrl, updatedCandidate);
+      continue;
+    }
+
+    const candidate = candidateWriter.insert(
+      company,
+      query,
+      item,
+      canonicalUrl,
+      false,
+    );
+    candidatesByRssUrl.set(candidate.rss_url, candidate);
+    candidatesByCanonicalUrl.set(candidate.canonical_url, candidate);
+    inserted += 1;
   }
 
   return { company: company.name, items: items.length, inserted, needsReview };
@@ -191,6 +261,7 @@ async function main() {
     .prepare("SELECT id, name FROM companies WHERE is_active = 1 ORDER BY id")
     .all();
   const decoder = new GoogleDecoder();
+  const candidateWriter = createCandidateWriter(database);
   const totals = {
     companies: companies.length,
     items: 0,
@@ -204,7 +275,7 @@ async function main() {
       companies,
       async (company) => {
         try {
-          const result = await searchCompany(company, decoder, database);
+          const result = await searchCompany(company, decoder, candidateWriter);
           console.log(
             `${result.company}: ${result.items} items, ${result.inserted} new, ${result.needsReview} needs review`,
           );
