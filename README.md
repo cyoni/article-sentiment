@@ -79,7 +79,8 @@ Before verification, the job fetches the publisher page again and removes common
 
 `same_event` means duplicate coverage of the same concrete event. `related_topic` means a similar subject but a separate event. `different` means there is no meaningful event relationship. `not_applicable` is used when there are no approved articles to compare.
 
-Company-match and duplicate confidence must be at least `0.80`. Content fetches retry once after a short delay for timeouts, network errors, HTTP `408`, HTTP `429`, and `5xx` responses; HTTP `403` is sent directly to manual review. Transient Ollama failures, empty replies, and invalid JSON or schema results are also retried once. Missing content, a second failed attempt, contradictory results, or low confidence go to manual review. Successful new coverage is inserted into `articles`; model calls and errors are recorded in `llm_logs`.
+Company match and duplicate confidence must be at least 0.80. I implemented one retry on Ollama failures. 403 responses, repeated failures, missing content, low confidence go to manual review.
+Approved articles are saved to articles, and model calls and errors are logged in llm_logs.
 
 ### 3. Sentiment
 
@@ -89,7 +90,7 @@ The sentiment job retries Ollama failures, empty replies, and invalid JSON or sc
 
 ### 4. Alerts
 
-The alert job groups newly completed articles into one AISEND digest per UTC day. It stores alert state and linked articles in `alerts` and `alert_articles`, so a successfully sent digest is not sent again. The digest groups articles by sentiment and includes the publisher link and confidence score.
+The alert job groups newly completed articles into one AISEND digest per day. It stores alert state and linked articles in `alerts` and `alert_articles`, so a successfully sent digest is not sent again. The digest groups articles by sentiment and includes the publisher link and confidence score.
 
 ## Data model
 
