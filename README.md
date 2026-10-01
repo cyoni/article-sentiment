@@ -1,6 +1,6 @@
-# OurCrowd Press Monitor
+# Press Monitor
 
-This project monitors recent press coverage for tracked OurCrowd companies. It searches Google News, verifies that an article is really about the company, avoids duplicate event coverage, classifies sentiment, and shows the results in a small dashboard.
+This project monitors recent news articles for tracked companies, verifies the articles and sends a daily alert.
 
 ## What it does
 
